@@ -36,8 +36,12 @@ function createApp(db, { uploadDir }) {
     const header = req.headers.authorization || '';
     try {
       const payload = jwt.verify(header.startsWith('Bearer ') ? header.slice(7) : '', SECRET);
-      const user = db.prepare('SELECT id,name,email,role FROM users WHERE id=?').get(payload.id);
+      const user = db.prepare('SELECT id,name,email,role,must_change_password FROM users WHERE id=?').get(payload.id);
       if (!user) return res.status(401).json({ error: 'Please sign in again.' });
+      // A user with a temporary password may only change the password until they have done so.
+      if (user.must_change_password && !['/api/me', '/api/me/password'].includes(req.path)) {
+        return res.status(403).json({ error: 'Please change your temporary password first.', code: 'MUST_CHANGE_PASSWORD' });
+      }
       req.user = user;
       return next();
     } catch {
@@ -96,7 +100,20 @@ function createApp(db, { uploadDir }) {
     }
     const token = jwt.sign({ id: row.id }, SECRET, { expiresIn: '8h' });
     logActivity(row, 'Signed in', row.role);
-    return res.json({ token, user: { id: row.id, name: row.name, email: row.email, role: row.role } });
+    return res.json({ token, user: { id: row.id, name: row.name, email: row.email, role: row.role, must_change_password: row.must_change_password } });
+  });
+
+  // Forgot password: no email service, so the request is queued for an admin to handle.
+  // The answer is always the same, so nobody can use this to discover which emails are registered.
+  app.post('/api/forgot-password', (req, res) => {
+    const email = String((req.body || {}).email || '').trim().toLowerCase();
+    if (!L.isValidEmail(email)) return bad(res, { email: 'Enter a valid email address.' });
+    const u = db.prepare('SELECT id,name FROM users WHERE email=?').get(email);
+    if (u && !db.prepare("SELECT 1 FROM password_resets WHERE user_id=? AND status='pending'").get(u.id)) {
+      db.prepare('INSERT INTO password_resets (user_id) VALUES (?)').run(u.id);
+      logActivity(u, 'Requested password reset');
+    }
+    return res.json({ ok: true, message: 'If this email is registered, an administrator has been notified and will give you a temporary password.' });
   });
   // Public sign-up. The role is ALWAYS 'student' (never taken from the request).
   app.post('/api/register', (req, res) => {
@@ -147,6 +164,21 @@ function createApp(db, { uploadDir }) {
     } catch {
       return bad(res, { email: 'This email is already registered.' });
     }
+  });
+  // Admin issues a temporary password (the user must change it at next sign-in).
+  app.get('/api/password-resets', auth, requireRole('admin'), (req, res) =>
+    res.json(db.prepare(`SELECT pr.id, pr.requested_at, u.id user_id, u.name, u.email, u.role FROM password_resets pr
+      JOIN users u ON u.id=pr.user_id WHERE pr.status='pending' ORDER BY pr.id`).all()));
+  app.post('/api/users/:id/reset-password', auth, requireRole('admin'), (req, res) => {
+    const id = Number(req.params.id);
+    if (id === req.user.id) return res.status(400).json({ error: 'Use your Profile page to change your own password.' });
+    const target = db.prepare('SELECT id,name,email FROM users WHERE id=?').get(id);
+    if (!target) return res.status(404).json({ error: 'User not found.' });
+    const temp = L.generateTempPassword();
+    db.prepare('UPDATE users SET password_hash=?, must_change_password=1 WHERE id=?').run(bcrypt.hashSync(temp, 8), id);
+    db.prepare("UPDATE password_resets SET status='done', resolved_at=datetime('now'), resolved_by=? WHERE user_id=? AND status='pending'").run(req.user.id, id);
+    logActivity(req.user, 'Reset password', target.email);
+    return res.json({ temp_password: temp, name: target.name, email: target.email });
   });
   app.delete('/api/users/:id', auth, requireRole('admin'), (req, res) => {
     const id = Number(req.params.id);
@@ -389,7 +421,7 @@ function createApp(db, { uploadDir }) {
     const row = db.prepare('SELECT password_hash FROM users WHERE id=?').get(req.user.id);
     if (!errors.current_password && !bcrypt.compareSync(String(d.current_password), row.password_hash)) errors.current_password = 'Current password is incorrect.';
     if (Object.keys(errors).length) return bad(res, errors);
-    db.prepare('UPDATE users SET password_hash=? WHERE id=?').run(bcrypt.hashSync(d.new_password, 8), req.user.id);
+    db.prepare('UPDATE users SET password_hash=?, must_change_password=0 WHERE id=?').run(bcrypt.hashSync(d.new_password, 8), req.user.id);
     logActivity(req.user, 'Changed password');
     return res.json({ ok: true });
   });

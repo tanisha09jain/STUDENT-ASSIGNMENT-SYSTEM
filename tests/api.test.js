@@ -234,3 +234,40 @@ test('CSV export: teacher gets file, student and other teacher are refused', asy
   assert.strictEqual((await call('GET', `/api/assignments/${a.id}/export`, { token: tokens.student })).status, 403);
   assert.strictEqual((await call('GET', `/api/assignments/${a.id}/export`, { token: tokens.teacher2 })).status, 403);
 });
+
+test('forgot password: same answer for known and unknown emails, admin issues temporary password, user must change it', async () => {
+  const reg = await call('POST', '/api/register', { body: { name: 'Forgetful', email: 'forget@college.edu', password: 'oldpass1' } });
+  const userId = reg.data.user.id;
+  assert.ok((await call('POST', '/api/forgot-password', { body: { email: 'not-an-email' } })).data.errors.email);
+  const unknown = await call('POST', '/api/forgot-password', { body: { email: 'nobody@college.edu' } });
+  const known = await call('POST', '/api/forgot-password', { body: { email: 'forget@college.edu' } });
+  assert.strictEqual(unknown.status, 200); assert.strictEqual(known.status, 200);
+  assert.strictEqual(unknown.data.message, known.data.message, 'must not reveal whether the email exists');
+  await call('POST', '/api/forgot-password', { body: { email: 'forget@college.edu' } }); // duplicate request
+
+  assert.strictEqual((await call('GET', '/api/password-resets', { token: tokens.student })).status, 403);
+  assert.strictEqual((await call('GET', '/api/password-resets', { token: tokens.teacher })).status, 403);
+  assert.strictEqual((await call('POST', `/api/users/${userId}/reset-password`, { token: tokens.teacher })).status, 403);
+  const pending = (await call('GET', '/api/password-resets', { token: tokens.admin })).data.filter((r) => r.email === 'forget@college.edu');
+  assert.strictEqual(pending.length, 1, 'duplicate requests are not queued twice');
+
+  const adminId = (await call('GET', '/api/me', { token: tokens.admin })).data.id;
+  assert.strictEqual((await call('POST', `/api/users/${adminId}/reset-password`, { token: tokens.admin })).status, 400);
+  assert.strictEqual((await call('POST', '/api/users/99999/reset-password', { token: tokens.admin })).status, 404);
+
+  const reset = await call('POST', `/api/users/${userId}/reset-password`, { token: tokens.admin });
+  assert.strictEqual(reset.status, 200);
+  const temp = reset.data.temp_password;
+  assert.strictEqual(await login('forget@college.edu', 'oldpass1'), undefined, 'old password stops working');
+  assert.ok(!(await call('GET', '/api/password-resets', { token: tokens.admin })).data.some((r) => r.email === 'forget@college.edu'), 'request marked done');
+
+  const t = await login('forget@college.edu', temp);
+  assert.ok(t, 'temporary password works');
+  const blocked = await call('GET', '/api/assignments', { token: t });
+  assert.strictEqual(blocked.status, 403);
+  assert.strictEqual(blocked.data.code, 'MUST_CHANGE_PASSWORD');
+  assert.strictEqual((await call('GET', '/api/me', { token: t })).data.must_change_password, 1);
+  assert.strictEqual((await call('PUT', '/api/me/password', { token: t, body: { current_password: temp, new_password: 'brandnew1' } })).status, 200);
+  assert.strictEqual((await call('GET', '/api/assignments', { token: t })).status, 200, 'normal access after changing password');
+  assert.ok(await login('forget@college.edu', 'brandnew1'));
+});

@@ -8,7 +8,8 @@ CREATE TABLE IF NOT EXISTS users (
   name TEXT NOT NULL,
   email TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
-  role TEXT NOT NULL CHECK (role IN ('student','teacher','admin'))
+  role TEXT NOT NULL CHECK (role IN ('student','teacher','admin')),
+  must_change_password INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS courses (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -65,6 +66,14 @@ CREATE TABLE IF NOT EXISTS notifications (
   is_read INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+CREATE TABLE IF NOT EXISTS password_resets (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','done')),
+  requested_at TEXT NOT NULL DEFAULT (datetime('now')),
+  resolved_at TEXT,
+  resolved_by INTEGER REFERENCES users(id) ON DELETE SET NULL
+);
 CREATE TABLE IF NOT EXISTS activity_log (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id INTEGER,
@@ -79,6 +88,11 @@ function openDb(file) {
   const db = new DatabaseSync(file);
   db.exec('PRAGMA foreign_keys = ON');
   db.exec(SCHEMA);
+  // Upgrade older database files that were created before this column existed.
+  const userColumns = db.prepare('PRAGMA table_info(users)').all().map((c) => c.name);
+  if (!userColumns.includes('must_change_password')) {
+    db.exec('ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0');
+  }
   // Small helper: run fn() inside a database transaction.
   db.transaction = (fn) => () => {
     db.exec('BEGIN');

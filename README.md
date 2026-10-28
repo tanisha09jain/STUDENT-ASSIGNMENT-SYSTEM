@@ -2,7 +2,7 @@
 
 Common project for **CSE3132 Software Engineering Lab**. Teachers create assignments, students submit work (with real file upload), teachers grade with written feedback, students see marks. An admin manages users and courses.
 
-**Extra features:** student self-registration, announcements, in-app notifications with unread counter, activity (audit) log, grade statistics, CSV export of marks, profile with password change. **9 database tables.**
+**Extra features:** student self-registration, announcements, in-app notifications with unread counter, activity (audit) log, grade statistics, CSV export of marks, profile with password change, forgot-password (admin-issued temporary password). **10 database tables.**
 
 **Stack:** Node.js + Express (API) · SQLite via Node's built-in `node:sqlite` (database file, nothing to compile) · plain HTML/CSS/JavaScript frontend served by Express.
 
@@ -90,6 +90,7 @@ erDiagram
   COURSES ||--o{ ANNOUNCEMENTS : has
   USERS ||--o{ ANNOUNCEMENTS : "posted by"
   USERS ||--o{ NOTIFICATIONS : receives
+  USERS ||--o{ PASSWORD_RESETS : requests
   USERS ||--o{ ACTIVITY_LOG : "performs (logged)"
 ```
 
@@ -102,6 +103,7 @@ erDiagram
 | submissions | id PK, assignment_id FK, student_id FK, file_name, file_path, answer_text, is_late, submitted_at; UNIQUE(assignment_id, student_id) |
 | announcements | id PK, course_id FK→courses, title, body, created_by FK→users, created_at |
 | notifications | id PK, user_id FK→users, message, link, is_read, created_at |
+| password_resets | id PK, user_id FK→users, status (pending/done), requested_at, resolved_at, resolved_by FK→users |
 | activity_log | id PK, user_id (no FK on purpose, so history survives deleted users), user_name, action, details, created_at |
 | grades | id PK, submission_id FK UNIQUE, marks, feedback, graded_by FK→users, graded_at |
 
@@ -155,6 +157,9 @@ Start with fresh demo data. "Expected" is what you should see.
 | T-28 | Teacher: Submissions page | Statistics (submitted, graded, average, highest, lowest) and *Export marks (CSV)* download that opens in Excel |
 | T-29 | Profile: wrong current password, then correct | Error, then success; old password stops working |
 | T-30 | Admin: Activity log; student opens `#/activity` | Table of actions; student sees "Access denied" |
+| T-31 | Login → *Forgot password?* → enter a registered email (also try an unknown email) | Same message both times (does not reveal which emails exist) |
+| T-32 | Admin overview → *Password reset requests* → *Generate temporary password* | 10-character password shown once; request disappears; user's old password stops working |
+| T-33 | Sign in with the temporary password; try opening another page | Forced to Profile with a banner until a new password is set; then the dashboard opens |
 | T-23 | Resize window to phone width | Layout stacks, nothing overflows sideways |
 
 ## 9. Automated tests
@@ -176,7 +181,7 @@ Run it against fresh demo data (delete `data/` first) because the grading test e
 
 ### What was and was not verified (honest status)
 
-- ✔ `npm test`: 30 tests, all passed when I ran them in my Linux sandbox.
+- ✔ `npm test`: 32 tests, all passed when I ran them in my Linux sandbox.
 - ✔ I drove the whole demo workflow (login, validation errors, create, submit with file, download, grade, student sees grade, refresh, forbidden pages, admin add user, delete with confirm, mobile layout) through a headless Chromium with a Playwright script: 23 checks passed, plus 15 more for registration-era and new features (announcements, notifications, password change, statistics, CSV export, activity log). That script is not included; it is not Selenium.
 - ✘ **Not run by me:** the Selenium script (no Selenium or ChromeDriver in my sandbox), anything on Windows, deployment, code coverage, complexity measurement. If the Selenium script needs a locator tweak on your machine, that is normal; the ids it uses all exist.
 
@@ -198,6 +203,7 @@ Run it against fresh demo data (delete `data/` first) because the grading test e
 ## 12. Limitations
 
 - Demo-grade authentication: a fixed fallback `JWT_SECRET` (set the `JWT_SECRET` environment variable for anything real), no password reset, no rate limiting, no HTTPS (needs a host or reverse proxy).
+- **Forgot password has no email**: an admin gives the user a temporary password. This avoids paid email services, but it needs an admin to be available. (If the only admin forgets their password, reset it in the database or delete the `data` folder to restore demo data.)
 - Self-registration creates **students only** (they are auto-enrolled in all courses). Teacher and admin accounts are created by the admin.
 - Deadlines are entered and compared in the server's local time zone (fine for one laptop demo).
 - Teachers can only be created and assigned to courses by the admin; there is no course edit form (delete and re-add).

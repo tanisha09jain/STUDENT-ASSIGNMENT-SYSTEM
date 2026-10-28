@@ -63,6 +63,19 @@ function validateCourse(data) {
   return errors;
 }
 
+function isValidEmail(email) {
+  return EMAIL_RE.test(String(email || '').trim());
+}
+
+// Random temporary password (no look-alike characters such as 0/O or 1/l/I).
+function generateTempPassword(length = 10) {
+  const crypto = require('crypto');
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
+  let out = '';
+  for (let i = 0; i < length; i += 1) out += chars[crypto.randomInt(chars.length)];
+  return out;
+}
+
 function validateAnnouncement(data) {
   const errors = {};
   const title = (data.title || '').trim();
@@ -106,5 +119,5 @@ function isLate(deadline, now = new Date()) {
 
 module.exports = {
   ROLES, validateAssignment, validateGrade, validateUser, validateCourse, assignmentStatus, isLate, isValidDate,
-  validateAnnouncement, validatePasswordChange, csvCell, toCsv,
+  validateAnnouncement, validatePasswordChange, csvCell, toCsv, isValidEmail, generateTempPassword,
 };

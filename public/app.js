@@ -70,7 +70,7 @@
             <button class="btn sm" type="button" data-fill="teacher@college.edu|teacher123" id="fill-teacher">Teacher</button>
             <button class="btn sm" type="button" data-fill="admin@college.edu|admin123" id="fill-admin">Admin</button>
           </div>
-          <p class="small" style="margin:1rem 0 0">New student? <a href="#/register" id="go-register">Create an account</a></p></div>
+          <p class="small" style="margin:1rem 0 0">New student? <a href="#/register" id="go-register">Create an account</a> · <a href="#/forgot" id="go-forgot">Forgot password?</a></p></div>
       </section></main>`;
     $$('[data-fill]').forEach((b) => b.addEventListener('click', () => {
       const [e, p] = b.dataset.fill.split('|');
@@ -121,6 +121,31 @@
           location.hash = '#/dashboard';
           render();
         } catch (e) { showErrors(form, e.errors); if (!Object.keys(e.errors || {}).length) { $('#reg-error').textContent = e.message; $('#reg-error').hidden = false; } }
+      });
+    });
+  }
+
+  // ---------- forgot password ----------
+  function forgotView() {
+    app.innerHTML = `
+      <main class="login"><section class="login-card">
+        <h1>Forgot password</h1>
+        <p class="muted">Enter your email. An administrator will be notified and will give you a temporary password. You will be asked to choose a new one when you sign in.</p>
+        <form id="forgot-form" novalidate>
+          <label>Email<input id="forgot-email" type="email" autocomplete="username">${field('email')}</label>
+          <div id="forgot-done" class="alert info" hidden></div>
+          <button id="forgot-btn" class="btn primary" type="submit">Request password reset</button>
+        </form>
+        <p class="small" style="margin-top:1rem"><a href="#/login" id="back-login">Back to sign in</a></p>
+      </section></main>`;
+    const form = $('#forgot-form');
+    form.addEventListener('submit', async (ev) => {
+      ev.preventDefault(); showErrors(form); $('#forgot-done').hidden = true;
+      await withBusy($('#forgot-btn'), async () => {
+        try {
+          const r = await api('/forgot-password', { method: 'POST', body: { email: $('#forgot-email').value } });
+          $('#forgot-done').textContent = r.message; $('#forgot-done').hidden = false;
+        } catch (e) { showErrors(form, e.errors); if (!Object.keys(e.errors || {}).length) toast(e.message, 'error'); }
       });
     });
   }
@@ -453,15 +478,21 @@
 
   // ---------- admin ----------
   async function adminView(view) {
-    const [stats, users, courses, assignments] = await Promise.all([api('/stats'), api('/users'), api('/courses'), api('/assignments')]);
+    const [stats, users, courses, assignments, resets] = await Promise.all([api('/stats'), api('/users'), api('/courses'), api('/assignments'), api('/password-resets')]);
     view.innerHTML = `
       <div class="page-head"><div><h1>Admin overview</h1><p class="muted">System statistics and user management.</p></div></div>
       <div class="stats">${[['students', 'Students'], ['teachers', 'Teachers'], ['courses', 'Courses'], ['assignments', 'Assignments'], ['submissions', 'Submissions'], ['graded', 'Graded'], ['announcements', 'Announcements']]
         .map(([k, l]) => `<div class="stat"><b id="stat-${k}">${stats[k]}</b><span>${l}</span></div>`).join('')}</div>
-      <h2>Users</h2>
+      <div id="temp-box"></div>
+      <h2>Password reset requests <span class="badge ${resets.length ? 'b-overdue' : 'b-graded'}" id="reset-count">${resets.length} pending</span></h2>
+      <div class="table-wrap" id="resets-area">${resets.length ? `<table id="resets-table"><thead><tr><th>User</th><th>Email</th><th>Role</th><th>Requested</th><th></th></tr></thead><tbody>
+        ${resets.map((r) => `<tr><td>${esc(r.name)}</td><td>${esc(r.email)}</td><td><span class="badge b-role">${r.role}</span></td><td>${fmt(r.requested_at)}</td>
+        <td>${r.user_id === state.user.id ? '' : `<button class="btn sm primary reset-pass" data-id="${r.user_id}" data-name="${esc(r.name)}">Generate temporary password</button>`}</td></tr>`).join('')}</tbody></table>`
+        : empty('No pending requests', 'When someone clicks "Forgot password?", the request appears here.')}</div>
+      <h2 style="margin-top:1.5rem">Users</h2>
       <div class="table-wrap"><table id="users-table"><thead><tr><th>Name</th><th>Email</th><th>Role</th><th></th></tr></thead><tbody>
         ${users.map((u) => `<tr><td>${esc(u.name)}</td><td>${esc(u.email)}</td><td><span class="badge b-role">${u.role}</span></td>
-        <td>${u.id === state.user.id ? '<span class="muted small">You</span>' : `<button class="btn sm danger del-user" data-id="${u.id}" data-name="${esc(u.name)}">Delete</button>`}</td></tr>`).join('')}</tbody></table></div>
+        <td class="actions-cell">${u.id === state.user.id ? '<span class="muted small">You</span>' : `<button class="btn sm reset-pass" data-id="${u.id}" data-name="${esc(u.name)}">Reset password</button><button class="btn sm danger del-user" data-id="${u.id}" data-name="${esc(u.name)}">Delete</button>`}</td></tr>`).join('')}</tbody></table></div>
       <form class="card form-card" id="user-form" novalidate style="margin-top:1rem"><h2>Add a demo user</h2>
         <div class="row"><label>Name<input id="u-name">${field('name')}</label><label>Email<input id="u-email" type="email">${field('email')}</label></div>
         <div class="row"><label>Password<input id="u-pass" type="password">${field('password')}</label>
@@ -481,6 +512,21 @@
         catch (e) { showErrors(form, e.errors); if (!Object.keys(e.errors).length) toast(e.message, 'error'); }
       });
     });
+    $$('.reset-pass').forEach((b) => b.addEventListener('click', async () => {
+      if (!confirm(`Generate a temporary password for ${b.dataset.name}? Their current password will stop working.`)) return;
+      try {
+        const r = await api(`/users/${b.dataset.id}/reset-password`, { method: 'POST' });
+        $('#temp-box').innerHTML = `<div class="card grade-box" id="temp-card"><b>Temporary password for ${esc(r.name)} (${esc(r.email)})</b>
+          <p style="margin:.4rem 0"><code id="temp-password" style="font-size:1.3rem;letter-spacing:.05em">${esc(r.temp_password)}</code></p>
+          <p class="small muted" style="margin:0">Give this to the user. It is shown only once, and they must choose a new password when they sign in.</p></div>`;
+        $('#temp-box').scrollIntoView({ behavior: 'smooth' });
+        $$('#resets-area .reset-pass').forEach((x) => { if (x.dataset.id === b.dataset.id) x.closest('tr').remove(); });
+        const left = $$('#resets-area tbody tr').length;
+        $('#reset-count').textContent = `${left} pending`;
+        $('#reset-count').className = `badge ${left ? 'b-overdue' : 'b-graded'}`;
+        toast('Temporary password created.');
+      } catch (e) { toast(e.message, 'error'); }
+    }));
     $$('.del-user').forEach((b) => b.addEventListener('click', async () => {
       if (!confirm(`Delete user ${b.dataset.name}? Their submissions and grades will also be removed.`)) return;
       try { await api(`/users/${b.dataset.id}`, { method: 'DELETE' }); toast('User deleted.'); render(); } catch (e) { toast(e.message, 'error'); }
@@ -546,6 +592,7 @@
     const u = state.user;
     view.innerHTML = `
       <div class="page-head"><div><h1>Profile</h1><p class="muted">Your account details and password.</p></div></div>
+      ${u.must_change_password ? '<div class="alert error" id="must-change">You are using a temporary password. Choose a new password to continue.</div>' : ''}
       <div class="card form-card"><div class="meta"><span>Name <b>${esc(u.name)}</b></span><span>Email <b>${esc(u.email)}</b></span><span>Role <b>${esc(u.role)}</b></span></div></div>
       <form class="card form-card" id="pass-form" novalidate><h2>Change password</h2>
         <label>Current password<input id="cur-pass" type="password" autocomplete="current-password">${field('current_password')}</label>
@@ -555,7 +602,8 @@
     form.addEventListener('submit', async (ev) => {
       ev.preventDefault(); showErrors(form);
       await withBusy($('#change-pass-btn'), async () => {
-        try { await api('/me/password', { method: 'PUT', body: { current_password: $('#cur-pass').value, new_password: $('#new-pass').value } }); toast('Password changed.'); form.reset(); }
+        try { await api('/me/password', { method: 'PUT', body: { current_password: $('#cur-pass').value, new_password: $('#new-pass').value } }); toast('Password changed.'); form.reset();
+          if (state.user.must_change_password) { state.user.must_change_password = 0; location.hash = state.user.role === 'admin' ? '#/admin' : '#/dashboard'; render(); } }
         catch (e) { showErrors(form, e.errors); if (!Object.keys(e.errors || {}).length) toast(e.message, 'error'); }
       });
     });
@@ -586,11 +634,13 @@
     }
     if (!state.user) {
       if (location.hash === '#/register') return registerView();
+      if (location.hash === '#/forgot') return forgotView();
       if (location.hash !== '#/login') location.hash = '#/login';
       return loginView();
     }
     let path = location.hash.slice(1);
     if (!path || path === '/login') { location.hash = state.user.role === 'admin' ? '#/admin' : '#/dashboard'; return null; }
+    if (state.user.must_change_password && path !== '/profile') { location.hash = '#/profile'; return null; }
     const view = shell(path.replace(/\/(\d+)(?=\/|$).*/, ''));
     const hit = routes.map(([re, roles, fn]) => [re.exec(path), roles, fn]).find(([m]) => m);
     if (!hit) { view.innerHTML = `<div class="card">${empty('Page not found', 'Use the menu to go somewhere else.')}</div>`; return null; }

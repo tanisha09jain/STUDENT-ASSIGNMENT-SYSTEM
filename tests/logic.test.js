@@ -61,3 +61,12 @@ test('csv export escapes commas, quotes and formula injection', () => {
   assert.strictEqual(L.csvCell(null), '');
   assert.strictEqual(L.toCsv(['a', 'b'], [[1, 'x']]), 'a,b\r\n1,x');
 });
+
+test('temporary password generator and email check', () => {
+  const p = L.generateTempPassword();
+  assert.strictEqual(p.length, 10);
+  assert.match(p, /^[A-HJ-NP-Za-km-z2-9]+$/);
+  assert.notStrictEqual(L.generateTempPassword(), L.generateTempPassword());
+  assert.ok(L.isValidEmail('a@b.co'));
+  assert.ok(!L.isValidEmail('nope'));
+});
