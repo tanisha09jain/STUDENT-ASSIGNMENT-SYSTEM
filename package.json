@@ -1,0 +1,22 @@
+{
+  "name": "student-assignment-system",
+  "version": "1.0.0",
+  "description": "CSE3132 Software Engineering Lab project",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "test": "node --test tests/api.test.js tests/logic.test.js",
+    "test:coverage": "node --test --experimental-test-coverage tests/api.test.js tests/logic.test.js"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "express": "^5.3.0",
+    "jsonwebtoken": "^9.0.3",
+    "multer": "^2.5.0"
+  },
+  "engines": {
+    "node": ">=22.13"
+  }
+}
